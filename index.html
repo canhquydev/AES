@@ -364,10 +364,24 @@
             }
 
             try {
+                hideError(); // Xóa lỗi cũ nếu có
                 const key = CryptoJS.enc.Utf8.parse(fileKey);
-                // Với file, nên dùng cấu hình mặc định hoặc tự quản lý IV cẩn thận
-                // Ở đây dùng mặc định của CryptoJS (tự sinh IV, Salted)
-                const encrypted = CryptoJS.AES.encrypt(fileContent.data, key);
+                
+                // --- SỬA LỖI: Lấy config từ giao diện ---
+                const config = getAESConfig();
+
+                // Tự động tạo IV nếu chế độ yêu cầu mà chưa có (giống logic fix trước)
+                if (document.getElementById('mode').value !== 'ECB' && !config.iv) {
+                    const randomIV = CryptoJS.lib.WordArray.random(16);
+                    config.iv = randomIV;
+                    document.getElementById('iv').value = randomIV.toString();
+                    // Thông báo cho user biết IV đã được tạo
+                    showResult('⚠️ Lưu ý: Hệ thống đã tự tạo IV mới. Bạn cần lưu lại IV này để giải mã file!');
+                }
+                // ----------------------------------------
+
+                // Truyền thêm config vào hàm encrypt
+                const encrypted = CryptoJS.AES.encrypt(fileContent.data, key, config);
                 
                 const blob = new Blob([encrypted.toString()], { type: 'text/plain' });
                 const url = URL.createObjectURL(blob);
@@ -376,8 +390,11 @@
                 a.download = fileContent.name + '.encrypted';
                 a.click();
                 
-                showResult('File đã được mã hóa và tải xuống!');
+                // Cập nhật thông báo
+                const mode = document.getElementById('mode').value;
+                showResult(`File đã mã hóa (${mode}) và tải xuống! Đừng quên lưu IV nếu dùng chế độ CBC/CTR/OFB/CFB.`);
             } catch (error) {
+                console.error(error);
                 showError('Mã hóa file thất bại: ' + error.message);
             }
         }
@@ -396,35 +413,44 @@
             }
 
             try {
+                hideError();
                 const key = CryptoJS.enc.Utf8.parse(fileKey);
-                // Đọc nội dung file text đã mã hóa
-                // Lưu ý: fileContent.data đang là DataURL, ta cần phần base64 nội dung thực
-                // Ở đây giả định user upload file .encrypted (text thuần)
                 
-                // Cần xử lý DataURL để lấy nội dung text
+                // --- SỬA LỖI: Lấy config để biết IV/Mode/Padding ---
+                const config = getAESConfig(); 
+                // ---------------------------------------------------
+
                 let encryptedData = fileContent.data;
+                // Xử lý nếu user upload file text bị dính header base64 của browser
                 if(encryptedData.includes('base64,')) {
                     encryptedData = atob(encryptedData.split(',')[1]);
                 }
 
-                const decrypted = CryptoJS.AES.decrypt(encryptedData, key);
+                // Truyền config vào hàm decrypt
+                const decrypted = CryptoJS.AES.decrypt(encryptedData, key, config);
                 const decryptedData = decrypted.toString(CryptoJS.enc.Utf8);
                 
                 if (!decryptedData) {
-                    throw new Error('Sai khóa hoặc file hỏng.');
+                    throw new Error('Sai khóa, sai IV hoặc sai Chế độ (Mode).');
                 }
 
                 const link = document.createElement('a');
-                link.href = decryptedData; // decryptedData chính là DataURL gốc của file
-                link.download = 'decrypted_' + fileContent.name.replace('.encrypted', '');
+                link.href = decryptedData; 
+                // Khôi phục tên file gốc
+                let downloadName = 'decrypted_' + fileContent.name.replace('.encrypted', '');
+                link.download = downloadName;
                 link.click();
                 
-                showResult('File đã được giải mã và tải xuống!');
+                showResult('File đã được giải mã thành công!');
             } catch (error) {
-                showError('Giải mã file thất bại: ' + error.message);
+                console.error(error);
+                if (error.message.includes("Malformed")) {
+                    showError('Giải mã thất bại: Sai Khóa, IV hoặc file bị hỏng (UTF-8 Error).');
+                } else {
+                    showError('Giải mã file thất bại: ' + error.message);
+                }
             }
         }
-
         function showResult(text) {
             const resultSection = document.getElementById('result');
             const resultText = document.getElementById('resultText');
